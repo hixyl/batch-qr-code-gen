@@ -12,6 +12,7 @@ interface QrOptions {
   bgColor: string
   ecLevel: 'L' | 'M' | 'Q' | 'H'
   dotStyle: DotStyle
+  logoDataUrl?: string
 }
 
 interface QrItem {
@@ -31,6 +32,7 @@ const DEFAULT_OPTIONS: QrOptions = {
 
 let qrItems: QrItem[] = []
 let currentOptions: QrOptions = { ...DEFAULT_OPTIONS }
+let logoDataUrl: string | null = null
 
 function renderQrToCanvas(text: string, options: QrOptions): Promise<HTMLCanvasElement> {
   const qrData = QRCode.create(text, { errorCorrectionLevel: options.ecLevel })
@@ -60,7 +62,53 @@ function renderQrToCanvas(text: string, options: QrOptions): Promise<HTMLCanvasE
     }
   }
 
+  if (options.logoDataUrl) {
+    return drawLogoOnCanvas(canvas, options.logoDataUrl, options.bgColor)
+  }
+
   return Promise.resolve(canvas)
+}
+
+function drawLogoOnCanvas(
+  canvas: HTMLCanvasElement,
+  logoDataUrl: string,
+  bgColor: string
+): Promise<HTMLCanvasElement> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const ctx = canvas.getContext('2d')!
+      const logoSize = canvas.width * 0.22
+      const x = (canvas.width - logoSize) / 2
+      const y = (canvas.height - logoSize) / 2
+      const padding = logoSize * 0.12
+      const borderRadius = logoSize * 0.1
+
+      ctx.fillStyle = bgColor
+      drawRoundedRect(ctx, x - padding, y - padding, logoSize + padding * 2, logoSize + padding * 2, borderRadius)
+
+      ctx.save()
+      ctx.beginPath()
+      const r = logoSize * 0.08
+      ctx.moveTo(x + r, y)
+      ctx.lineTo(x + logoSize - r, y)
+      ctx.quadraticCurveTo(x + logoSize, y, x + logoSize, y + r)
+      ctx.lineTo(x + logoSize, y + logoSize - r)
+      ctx.quadraticCurveTo(x + logoSize, y + logoSize, x + logoSize - r, y + logoSize)
+      ctx.lineTo(x + r, y + logoSize)
+      ctx.quadraticCurveTo(x, y + logoSize, x, y + logoSize - r)
+      ctx.lineTo(x, y + r)
+      ctx.quadraticCurveTo(x, y, x + r, y)
+      ctx.closePath()
+      ctx.clip()
+      ctx.drawImage(img, x, y, logoSize, logoSize)
+      ctx.restore()
+
+      resolve(canvas)
+    }
+    img.onerror = () => resolve(canvas)
+    img.src = logoDataUrl
+  })
 }
 
 function drawModule(
@@ -238,13 +286,18 @@ async function generateQrCodes() {
 }
 
 function readOptions(): QrOptions {
+  let ecLevel = (document.getElementById('opt-ec') as HTMLSelectElement).value as 'L' | 'M' | 'Q' | 'H'
+  if (logoDataUrl && ecLevel !== 'H') {
+    ecLevel = 'H'
+  }
   return {
-    width: parseInt((document.getElementById('opt-width') as HTMLInputElement).value) || 256,
+    width: parseInt((document.getElementById('opt-width') as HTMLSelectElement).value) || 256,
     margin: parseInt((document.getElementById('opt-margin') as HTMLInputElement).value) ?? 2,
     fgColor: (document.getElementById('opt-fg') as HTMLInputElement).value || '#000000',
     bgColor: (document.getElementById('opt-bg') as HTMLInputElement).value || '#ffffff',
-    ecLevel: (document.getElementById('opt-ec') as HTMLSelectElement).value as 'L' | 'M' | 'Q' | 'H',
+    ecLevel,
     dotStyle: (document.querySelector('.style-option.active') as HTMLElement)?.dataset.style as DotStyle || 'square',
+    logoDataUrl: logoDataUrl || undefined,
   }
 }
 
@@ -406,8 +459,14 @@ function init() {
           </div>
           <div class="card-body">
             <div class="form-group">
-              <label>尺寸 (px)</label>
-              <input type="number" id="opt-width" value="256" min="64" max="2048" step="32">
+              <label>尺寸</label>
+              <select id="opt-width">
+                <option value="128">128 × 128</option>
+                <option value="256" selected>256 × 256（推荐）</option>
+                <option value="512">512 × 512</option>
+                <option value="768">768 × 768</option>
+                <option value="1024">1024 × 1024</option>
+              </select>
             </div>
 
             <div class="form-group">
@@ -434,6 +493,22 @@ function init() {
                 <option value="Q">Q - 较高 (25%)</option>
                 <option value="H">H - 高 (30%)</option>
               </select>
+            </div>
+
+            <div class="form-group">
+              <label>中心Logo</label>
+              <div class="logo-upload" id="logo-upload">
+                <input type="file" id="logo-file" accept="image/*" hidden>
+                <div class="logo-upload-placeholder" id="logo-placeholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24"><path d="M12 5v14M5 12h14"/></svg>
+                  <span>点击上传Logo</span>
+                </div>
+                <div class="logo-upload-preview" id="logo-preview" style="display:none">
+                  <img id="logo-preview-img" alt="Logo预览">
+                  <button class="logo-remove" id="logo-remove" title="移除Logo">&times;</button>
+                </div>
+              </div>
+              <div class="logo-hint" id="logo-hint" style="display:none">已启用Logo，容错级别自动设为H</div>
             </div>
 
             <div class="form-group">
@@ -479,6 +554,40 @@ function init() {
     el.addEventListener('click', () => {
       setDotStyle((el as HTMLElement).dataset.style as DotStyle)
     })
+  })
+
+  document.getElementById('logo-upload')!.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).id === 'logo-remove' || (e.target as HTMLElement).closest('.logo-remove')) return
+    document.getElementById('logo-file')!.click()
+  })
+
+  document.getElementById('logo-file')!.addEventListener('change', (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      logoDataUrl = ev.target?.result as string
+      const previewImg = document.getElementById('logo-preview-img') as HTMLImageElement
+      previewImg.src = logoDataUrl
+      document.getElementById('logo-placeholder')!.style.display = 'none'
+      document.getElementById('logo-preview')!.style.display = 'flex'
+      document.getElementById('logo-hint')!.style.display = 'block'
+      const ecSelect = document.getElementById('opt-ec') as HTMLSelectElement
+      ecSelect.value = 'H'
+      ecSelect.disabled = true
+    }
+    reader.readAsDataURL(file)
+  })
+
+  document.getElementById('logo-remove')!.addEventListener('click', (e) => {
+    e.stopPropagation()
+    logoDataUrl = null
+    ;(document.getElementById('logo-file') as HTMLInputElement).value = ''
+    document.getElementById('logo-placeholder')!.style.display = 'flex'
+    document.getElementById('logo-preview')!.style.display = 'none'
+    document.getElementById('logo-hint')!.style.display = 'none'
+    const ecSelect = document.getElementById('opt-ec') as HTMLSelectElement
+    ecSelect.disabled = false
   })
 
   document.getElementById('qr-input')!.addEventListener('keydown', (e) => {
