@@ -362,11 +362,24 @@ function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+function extractNameFromUrl(text: string): string | null {
+  try {
+    const url = new URL(text)
+    return url.searchParams.get('name')
+  } catch {
+    return null
+  }
+}
+
+function getFileName(text: string, index: number): string {
+  return extractNameFromUrl(text) || `qrcode_${index + 1}`
+}
+
 function downloadSingle(index: number) {
   const item = qrItems[index]
   if (!item) return
   const link = document.createElement('a')
-  link.download = `qrcode_${index + 1}.png`
+  link.download = `${getFileName(item.text, index)}.png`
   link.href = item.dataUrl
   link.click()
   showToast(`已下载二维码 #${index + 1}`)
@@ -399,7 +412,7 @@ async function downloadAll() {
     const zip = new JSZip()
     qrItems.forEach((item, i) => {
       const base64 = item.dataUrl.split(',')[1]
-      zip.file(`qrcode_${i + 1}.png`, base64, { base64: true })
+      zip.file(`${getFileName(item.text, i)}.png`, base64, { base64: true })
     })
 
     const blob = await zip.generateAsync({ type: 'blob' })
